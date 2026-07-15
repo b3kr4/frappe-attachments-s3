@@ -5,6 +5,7 @@ import os
 import random
 import re
 import string
+from six.moves.urllib.parse import quote, urlparse, urlunparse
 
 import boto3
 
@@ -28,25 +29,53 @@ class S3Operations(object):
             'S3 File Attachment',
             'S3 File Attachment',
         )
-        if (
-            self.s3_settings_doc.aws_key and
-            self.s3_settings_doc.aws_secret
-        ):
-            self.S3_CLIENT = boto3.client(
-                's3',
-                aws_access_key_id=self.s3_settings_doc.aws_key,
-                aws_secret_access_key=self.s3_settings_doc.aws_secret,
-                region_name=self.s3_settings_doc.region_name,
-                config=Config(signature_version='s3v4')
+        self.provider = self.s3_settings_doc.storage_provider or 'AWS S3'
+        self.endpoint_url = self.s3_settings_doc.endpoint_url
+
+        # Hetzner Object Storage exposes an S3-compatible API, but unlike AWS
+        # it requires its regional endpoint and virtual-host bucket addressing.
+        if self.provider == 'Hetzner Object Storage' and not self.endpoint_url:
+            self.endpoint_url = 'https://{}.your-objectstorage.com'.format(
+                self.s3_settings_doc.region_name
             )
-        else:
-            self.S3_CLIENT = boto3.client(
-                's3',
-                region_name=self.s3_settings_doc.region_name,
-                config=Config(signature_version='s3v4')
-            )
+
+        config_options = {'signature_version': 's3v4'}
+        if self.provider == 'Hetzner Object Storage':
+            config_options['s3'] = {
+                'payload_signing_enabled': False,
+                'addressing_style': 'virtual',
+            }
+
+        client_options = {
+            'region_name': self.s3_settings_doc.region_name,
+            'config': Config(**config_options),
+        }
+        if self.endpoint_url:
+            client_options['endpoint_url'] = self.endpoint_url
+        if self.s3_settings_doc.aws_key and self.s3_settings_doc.aws_secret:
+            client_options['aws_access_key_id'] = self.s3_settings_doc.aws_key
+            client_options['aws_secret_access_key'] = self.s3_settings_doc.aws_secret
+
+        self.S3_CLIENT = boto3.client('s3', **client_options)
         self.BUCKET = self.s3_settings_doc.bucket_name
         self.folder_name = self.s3_settings_doc.folder_name
+
+    def get_public_url(self, key):
+        """Return the direct URL for an object that was uploaded public-read."""
+        if self.provider != 'Hetzner Object Storage':
+            return '{}/{}/{}'.format(
+                self.S3_CLIENT.meta.endpoint_url.rstrip('/'),
+                self.BUCKET,
+                quote(key)
+            )
+
+        endpoint = urlparse(self.S3_CLIENT.meta.endpoint_url)
+        return urlunparse((
+            endpoint.scheme,
+            '{}.{}'.format(self.BUCKET, endpoint.netloc),
+            '/{}'.format(quote(key)),
+            '', '', ''
+        ))
 
     def strip_special_chars(self, file_name):
         """
@@ -210,11 +239,7 @@ def file_upload_to_s3(doc, method):
             method = "frappe_s3_attachment.controller.generate_file"
             file_url = """/api/method/{0}?key={1}&file_name={2}""".format(method, key, doc.file_name)
         else:
-            file_url = '{}/{}/{}'.format(
-                s3_upload.S3_CLIENT.meta.endpoint_url,
-                s3_upload.BUCKET,
-                key
-            )
+            file_url = s3_upload.get_public_url(key)
         os.remove(file_path)
         frappe.db.sql("""UPDATE `tabFile` SET file_url=%s, folder=%s,
             old_parent=%s, content_hash=%s WHERE name=%s""", (
@@ -274,11 +299,7 @@ def upload_existing_files_s3(name):
             method = "frappe_s3_attachment.controller.generate_file"
             file_url = """/api/method/{0}?key={1}""".format(method, key)
         else:
-            file_url = '{}/{}/{}'.format(
-                s3_upload.S3_CLIENT.meta.endpoint_url,
-                s3_upload.BUCKET,
-                key
-            )
+            file_url = s3_upload.get_public_url(key)
 
         # Remove file from local.
         os.remove(file_path)
