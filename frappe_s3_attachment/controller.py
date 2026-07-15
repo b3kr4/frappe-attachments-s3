@@ -152,13 +152,9 @@ class S3Operations(object):
         return url
 
 
-def get_download_url(key, file_name=None):
-    """Return a Frappe route; do not persist direct Object Storage URLs."""
-    method = "frappe_s3_attachment.controller.generate_file"
-    url = "/api/method/{}?key={}".format(method, key)
-    if file_name:
-        url += "&file_name={}".format(file_name)
-    return url
+def get_download_url(file_id):
+    """Return a concise app route; do not persist Object Storage URLs."""
+    return "/s3/{}".format(file_id)
 
 
 def update_attach_field_references(old_url, new_url):
@@ -191,6 +187,14 @@ def get_file_for_key(key):
     return file_doc
 
 
+def redirect_to_file(file_doc, file_name=None):
+    s3_upload = S3Operations()
+    object_key = s3_upload.key_generator(file_doc.content_hash, '', '', '')
+    signed_url = s3_upload.get_url(object_key, file_name or file_doc.file_name)
+    frappe.local.response["type"] = "redirect"
+    frappe.local.response["location"] = signed_url
+
+
 @frappe.whitelist()
 def file_upload_to_s3(doc, method):
     """
@@ -213,7 +217,7 @@ def file_upload_to_s3(doc, method):
             parent_name
         )
 
-        file_url = get_download_url(doc.content_hash, doc.file_name)
+        file_url = get_download_url(doc.name)
         os.remove(file_path)
         frappe.db.sql("""UPDATE `tabFile` SET file_url=%s, folder=%s,
             old_parent=%s WHERE name=%s""", (
@@ -235,11 +239,7 @@ def generate_file(key=None, file_name=None):
     """
     if key:
         file_doc = get_file_for_key(key)
-        s3_upload = S3Operations()
-        object_key = s3_upload.key_generator(key, '', '', '')
-        signed_url = s3_upload.get_url(object_key, file_name or file_doc.file_name)
-        frappe.local.response["type"] = "redirect"
-        frappe.local.response["location"] = signed_url
+        redirect_to_file(file_doc, file_name)
     else:
         frappe.local.response['body'] = "Key not found."
     return
@@ -260,7 +260,18 @@ def serve_legacy_file(legacy_file_url=None):
     )
     if len(files) != 1:
         frappe.throw(frappe._("File not found."), frappe.DoesNotExistError)
-    return generate_file(files[0].content_hash, file_name)
+    return serve_file_by_name(files[0].name)
+
+
+@frappe.whitelist()
+def serve_file_by_name(file_id=None):
+    """Resolve a concise /s3/<File name> URL through the download flow."""
+    if not file_id:
+        frappe.throw(frappe._("File not found."), frappe.DoesNotExistError)
+    file_doc = frappe.get_doc('File', file_id)
+    if not file_doc.has_permission('read'):
+        frappe.throw(frappe._("Not permitted."), frappe.PermissionError)
+    return redirect_to_file(file_doc)
 
 
 def upload_existing_files_s3(name):
@@ -290,7 +301,7 @@ def upload_existing_files_s3(name):
             parent_name
         )
 
-        file_url = get_download_url(doc.content_hash, doc.file_name)
+        file_url = get_download_url(doc.name)
 
         # Remove file from local.
         os.remove(file_path)
