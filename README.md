@@ -4,7 +4,11 @@
 
 Frappe app to make file upload automatically upload and read from S3-compatible object storage.
 
-#### Features.
+This repository is a fork of [zerodha/frappe-attachments-s3](https://github.com/zerodha/frappe-attachments-s3).
+The original project provides the S3 integration; this fork extends it for private,
+Frappe-authorised use with Hetzner Object Storage.
+
+#### Features from the original project
 
 1. Upload both public and private files to s3.
 2. Stream files from S3, when file is viewed everytime.
@@ -12,13 +16,25 @@ Frappe app to make file upload automatically upload and read from S3-compatible 
     (access key, secret key, bucket name, folder name) through UI and migrate existing
     files.
 4. Deletes from s3 whenever a file is deleted in ui.
-5. Objects are private and content-addressed as `{s3_folder_path}/sha256/{content_hash}`.
-    Identical files share one object; downloads are authorised by Frappe and use
-    short-lived signed URLs.
+
+#### Additions in this fork
+
+1. **Hetzner Object Storage** as a selectable S3-compatible provider. The endpoint
+   is derived from the Hetzner bucket location or can be configured explicitly.
+2. **Private object storage by default.** Bucket URLs are not stored or shown to
+   users. Frappe verifies access to the corresponding `File` document and then
+   redirects to a short-lived signed download URL.
+3. **Content-addressed objects and deduplication.** Objects are stored below
+   `{s3_folder_path}/sha256/{content_hash}`. Uploading identical content reuses the
+   existing object; it is deleted only after the last referencing `File` is removed.
+4. **Concise private download routes.** Attachments use `/s3/<file-id>/<file-name>`
+   instead of public Object Storage URLs. The Frappe UI shows only the file name.
+5. **Backward-compatible file links.** Existing `/files/...` links can continue to
+   resolve through this app without modifying Frappe core or the web-server config.
 
 #### Installation.
 
-1. bench get-app https://github.com/zerodhatech/Frappe-attachments-s3.git
+1. bench get-app https://bitbucket.org/hotset/frappe-attachments-s3.git
 2. bench install-app frappe_s3_attachment
 
 #### Configuration Setup.
