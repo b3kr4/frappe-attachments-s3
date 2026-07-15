@@ -5,7 +5,7 @@ import os
 import random
 import re
 import string
-from six.moves.urllib.parse import quote, urlparse, urlunparse
+from six.moves.urllib.parse import urlparse, urlunparse
 
 import boto3
 
@@ -61,19 +61,23 @@ class S3Operations(object):
         self.folder_name = self.s3_settings_doc.folder_name
 
     def get_public_url(self, key):
-        """Return the direct URL for an object that was uploaded public-read."""
+        """Return the direct URL for an object that was uploaded public-read.
+
+        Keep the key unescaped here: Frappe escapes attachment URLs when it
+        renders them, and pre-escaping would turn spaces into ``%2520``.
+        """
         if self.provider != 'Hetzner Object Storage':
             return '{}/{}/{}'.format(
                 self.S3_CLIENT.meta.endpoint_url.rstrip('/'),
                 self.BUCKET,
-                quote(key)
+                key
             )
 
         endpoint = urlparse(self.S3_CLIENT.meta.endpoint_url)
         return urlunparse((
             endpoint.scheme,
             '{}.{}'.format(self.BUCKET, endpoint.netloc),
-            '/{}'.format(quote(key)),
+            '/{}'.format(key),
             '', '', ''
         ))
 
