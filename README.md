@@ -12,8 +12,9 @@ Frappe app to make file upload automatically upload and read from S3-compatible 
     (access key, secret key, bucket name, folder name) through UI and migrate existing
     files.
 4. Deletes from s3 whenever a file is deleted in ui.
-5. Files are uploaded categorically in the format.
-    {s3_folder_path}/{year}/{month}/{day}/{doctype}/{file_hash}
+5. Objects are private and content-addressed as `{s3_folder_path}/sha256/{content_hash}`.
+    Identical files share one object; downloads are authorised by Frappe and use
+    short-lived signed URLs.
 
 #### Installation.
 
