@@ -5,8 +5,6 @@ import os
 import random
 import re
 import string
-from six.moves.urllib.parse import urlparse, urlunparse
-
 import boto3
 
 from botocore.client import Config
@@ -59,27 +57,6 @@ class S3Operations(object):
         self.S3_CLIENT = boto3.client('s3', **client_options)
         self.BUCKET = self.s3_settings_doc.bucket_name
         self.folder_name = self.s3_settings_doc.folder_name
-
-    def get_public_url(self, key):
-        """Return the direct URL for an object that was uploaded public-read.
-
-        Keep the key unescaped here: Frappe escapes attachment URLs when it
-        renders them, and pre-escaping would turn spaces into ``%2520``.
-        """
-        if self.provider != 'Hetzner Object Storage':
-            return '{}/{}/{}'.format(
-                self.S3_CLIENT.meta.endpoint_url.rstrip('/'),
-                self.BUCKET,
-                key
-            )
-
-        endpoint = urlparse(self.S3_CLIENT.meta.endpoint_url)
-        return urlunparse((
-            endpoint.scheme,
-            '{}.{}'.format(self.BUCKET, endpoint.netloc),
-            '/{}'.format(key),
-            '', '', ''
-        ))
 
     def strip_special_chars(self, file_name):
         """
@@ -144,29 +121,18 @@ class S3Operations(object):
         key = self.key_generator(file_name, parent_doctype, parent_name)
         content_type = mime_type
         try:
-            if is_private:
-                self.S3_CLIENT.upload_file(
-                    file_path, self.BUCKET, key,
-                    ExtraArgs={
+            # All objects remain private. Frappe authorises access and returns
+            # a short-lived signed download URL instead of exposing the bucket.
+            self.S3_CLIENT.upload_file(
+                file_path, self.BUCKET, key,
+                ExtraArgs={
+                    "ContentType": content_type,
+                    "Metadata": {
                         "ContentType": content_type,
-                        "Metadata": {
-                            "ContentType": content_type,
-                            "file_name": file_name
-                        }
+                        "file_name": file_name
                     }
-                )
-            else:
-                self.S3_CLIENT.upload_file(
-                    file_path, self.BUCKET, key,
-                    ExtraArgs={
-                        "ContentType": content_type,
-                        "ACL": 'public-read',
-                        "Metadata": {
-                            "ContentType": content_type,
-
-                        }
-                    }
-                )
+                }
+            )
 
         except boto3.exceptions.S3UploadFailedError:
             frappe.throw(frappe._("File Upload Failed. Please try again."))
@@ -217,6 +183,45 @@ class S3Operations(object):
         return url
 
 
+def get_download_url(key, file_name=None):
+    """Return a Frappe route; do not persist direct Object Storage URLs."""
+    method = "frappe_s3_attachment.controller.generate_file"
+    url = "/api/method/{}?key={}".format(method, key)
+    if file_name:
+        url += "&file_name={}".format(file_name)
+    return url
+
+
+def update_attach_field_references(old_url, new_url):
+    """Keep Attach fields (including child tables) in sync with File.file_url."""
+    attach_fields = frappe.get_all(
+        'DocField',
+        filters={'fieldtype': ['in', ['Attach', 'Attach Image']]},
+        fields=['parent', 'fieldname']
+    )
+    for field in attach_fields:
+        if not frappe.db.table_exists(field.parent):
+            continue
+        table = 'tab{}'.format(field.parent).replace('`', '``')
+        fieldname = field.fieldname.replace('`', '``')
+        frappe.db.sql(
+            "UPDATE `{}` SET `{}`=%s WHERE `{}`=%s".format(
+                table, fieldname, fieldname
+            ),
+            (new_url, old_url)
+        )
+
+
+def get_file_for_key(key):
+    file_name = frappe.db.get_value('File', {'content_hash': key}, 'name')
+    if not file_name:
+        frappe.throw(frappe._("File not found."), frappe.DoesNotExistError)
+    file_doc = frappe.get_doc('File', file_name)
+    if not file_doc.has_permission('read'):
+        frappe.throw(frappe._("Not permitted."), frappe.PermissionError)
+    return file_doc
+
+
 @frappe.whitelist()
 def file_upload_to_s3(doc, method):
     """
@@ -239,17 +244,14 @@ def file_upload_to_s3(doc, method):
             parent_name
         )
 
-        if doc.is_private:
-            method = "frappe_s3_attachment.controller.generate_file"
-            file_url = """/api/method/{0}?key={1}&file_name={2}""".format(method, key, doc.file_name)
-        else:
-            file_url = s3_upload.get_public_url(key)
+        file_url = get_download_url(key, doc.file_name)
         os.remove(file_path)
         frappe.db.sql("""UPDATE `tabFile` SET file_url=%s, folder=%s,
             old_parent=%s, content_hash=%s WHERE name=%s""", (
             file_url, 'Home/Attachments', 'Home/Attachments', key, doc.name))
 
         doc.file_url = file_url
+        update_attach_field_references(path, file_url)
 
         if parent_doctype and frappe.get_meta(parent_doctype).get('image_field'):
             frappe.db.set_value(parent_doctype, parent_name, frappe.get_meta(parent_doctype).get('image_field'), file_url)
@@ -263,13 +265,32 @@ def generate_file(key=None, file_name=None):
     Function to stream file from s3.
     """
     if key:
+        file_doc = get_file_for_key(key)
         s3_upload = S3Operations()
-        signed_url = s3_upload.get_url(key, file_name)
+        signed_url = s3_upload.get_url(key, file_name or file_doc.file_name)
         frappe.local.response["type"] = "redirect"
         frappe.local.response["location"] = signed_url
     else:
         frappe.local.response['body'] = "Key not found."
     return
+
+
+@frappe.whitelist()
+def serve_legacy_file(legacy_file_url=None):
+    """Resolve a missing /files URL through the authenticated download flow."""
+    if not legacy_file_url or not legacy_file_url.startswith('/files/'):
+        frappe.throw(frappe._("File not found."), frappe.DoesNotExistError)
+
+    file_name = legacy_file_url.rsplit('/', 1)[-1]
+    files = frappe.get_all(
+        'File',
+        filters={'file_name': file_name, 'is_private': 0},
+        fields=['name', 'content_hash'],
+        limit_page_length=2
+    )
+    if len(files) != 1:
+        frappe.throw(frappe._("File not found."), frappe.DoesNotExistError)
+    return generate_file(files[0].content_hash, file_name)
 
 
 def upload_existing_files_s3(name):
@@ -299,11 +320,7 @@ def upload_existing_files_s3(name):
             parent_name
         )
 
-        if doc.is_private:
-            method = "frappe_s3_attachment.controller.generate_file"
-            file_url = """/api/method/{0}?key={1}""".format(method, key)
-        else:
-            file_url = s3_upload.get_public_url(key)
+        file_url = get_download_url(key, doc.file_name)
 
         # Remove file from local.
         os.remove(file_path)
@@ -313,6 +330,7 @@ def upload_existing_files_s3(name):
             old_parent=%s, content_hash=%s WHERE name=%s""",
             (file_url, "Home/Attachments", "Home/Attachments", key, doc.name),
         )
+        update_attach_field_references(path, file_url)
         frappe.db.commit()
 
 
@@ -347,6 +365,31 @@ def delete_from_cloud(doc, method):
     """Delete file from s3"""
     s3 = S3Operations()
     s3.delete_from_s3(doc.content_hash)
+
+
+@frappe.whitelist()
+def make_existing_files_private():
+    """Remove public-read ACLs from all objects tracked by this app."""
+    s3_upload = S3Operations()
+    files = frappe.db.sql(
+        """SELECT name, content_hash FROM `tabFile`
+        WHERE content_hash IS NOT NULL
+        AND file_url LIKE %s""",
+        ('/api/method/frappe_s3_attachment.controller.generate_file%',),
+        as_dict=True
+    )
+    updated = 0
+    for file_doc in files:
+        try:
+            s3_upload.S3_CLIENT.put_object_acl(
+                Bucket=s3_upload.BUCKET,
+                Key=file_doc.content_hash,
+                ACL='private'
+            )
+            updated += 1
+        except ClientError:
+            frappe.log_error(frappe.get_traceback(), 'S3 ACL update failed')
+    return updated
 
 
 @frappe.whitelist()

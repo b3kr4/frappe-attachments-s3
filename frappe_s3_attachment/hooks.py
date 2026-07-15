@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals
 from . import __version__ as app_version
+from frappe_s3_attachment.legacy_files import install_legacy_files_fallback
+
+install_legacy_files_fallback()
 
 app_name = "frappe_s3_attachment"
 app_title = "Frappe S3 Attachment"
