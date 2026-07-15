@@ -152,9 +152,12 @@ class S3Operations(object):
         return url
 
 
-def get_download_url(file_id):
+def get_download_url(file_id, file_name=None):
     """Return a concise app route; do not persist Object Storage URLs."""
-    return "/s3/{}".format(file_id)
+    url = "/s3/{}".format(file_id)
+    if file_name:
+        url += "/{}".format(file_name)
+    return url
 
 
 def update_attach_field_references(old_url, new_url):
@@ -217,7 +220,7 @@ def file_upload_to_s3(doc, method):
             parent_name
         )
 
-        file_url = get_download_url(doc.name)
+        file_url = get_download_url(doc.name, doc.file_name)
         os.remove(file_path)
         frappe.db.sql("""UPDATE `tabFile` SET file_url=%s, folder=%s,
             old_parent=%s WHERE name=%s""", (
@@ -301,7 +304,7 @@ def upload_existing_files_s3(name):
             parent_name
         )
 
-        file_url = get_download_url(doc.name)
+        file_url = get_download_url(doc.name, doc.file_name)
 
         # Remove file from local.
         os.remove(file_path)

@@ -21,8 +21,9 @@ def install_legacy_files_fallback():
     def call_with_legacy_fallback(self, environ, start_response):
         requested_path = environ.get('PATH_INFO', '')
         if requested_path.startswith('/s3/'):
-            file_id = requested_path[len('/s3/'):]
-            if '/' not in file_id:
+            route_parts = requested_path[len('/s3/'):].split('/')
+            file_id = route_parts[0]
+            if file_id and len(route_parts) <= 2:
                 fallback_environ = environ.copy()
                 fallback_environ['PATH_INFO'] = (
                     '/api/method/frappe_s3_attachment.controller.serve_file_by_name'
