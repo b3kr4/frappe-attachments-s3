@@ -2,6 +2,8 @@ from __future__ import unicode_literals
 
 import os
 import re
+from urllib.parse import quote
+
 import boto3
 
 from botocore.client import Config
@@ -96,11 +98,7 @@ class S3Operations(object):
                 self.S3_CLIENT.upload_file(
                     file_path, self.BUCKET, key,
                     ExtraArgs={
-                        "ContentType": content_type,
-                        "Metadata": {
-                            "ContentType": content_type,
-                            "file_name": file_name
-                        }
+                        "ContentType": content_type
                     }
                 )
 
@@ -142,7 +140,11 @@ class S3Operations(object):
 
         }
         if file_name:
-            params['ResponseContentDisposition'] = 'filename={}'.format(file_name)
+            params['ResponseContentDisposition'] = (
+                "attachment; filename*=UTF-8''{}".format(
+                    quote(file_name, safe='')
+                )
+            )
 
         url = self.S3_CLIENT.generate_presigned_url(
             'get_object',
