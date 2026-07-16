@@ -185,10 +185,23 @@ def get_file_for_key(key):
     return file_doc
 
 
-def redirect_to_file(file_doc, file_name=None):
+def get_file_for_id(file_id):
+    """Return a File document after checking its read permission."""
+    file_doc = frappe.get_doc('File', file_id)
+    if not file_doc.has_permission('read'):
+        frappe.throw(frappe._("Not permitted."), frappe.PermissionError)
+    return file_doc
+
+
+def get_signed_url(file_doc, file_name=None):
+    """Generate the authorised, short-lived Object Storage download URL."""
     s3_upload = S3Operations()
     object_key = s3_upload.key_generator(file_doc.content_hash, '', '', '')
-    signed_url = s3_upload.get_url(object_key, file_name or file_doc.file_name)
+    return s3_upload.get_url(object_key, file_name or file_doc.file_name)
+
+
+def redirect_to_file(file_doc, file_name=None):
+    signed_url = get_signed_url(file_doc, file_name)
     frappe.local.response["type"] = "redirect"
     frappe.local.response["location"] = signed_url
 
@@ -266,10 +279,7 @@ def serve_file_by_name(file_id=None):
     """Resolve a concise /s3/<File name> URL through the download flow."""
     if not file_id:
         frappe.throw(frappe._("File not found."), frappe.DoesNotExistError)
-    file_doc = frappe.get_doc('File', file_id)
-    if not file_doc.has_permission('read'):
-        frappe.throw(frappe._("Not permitted."), frappe.PermissionError)
-    return redirect_to_file(file_doc)
+    return redirect_to_file(get_file_for_id(file_id))
 
 
 def upload_existing_files_s3(name):

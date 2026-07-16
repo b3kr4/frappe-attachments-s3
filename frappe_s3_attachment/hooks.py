@@ -21,6 +21,13 @@ app_license = "MIT"
 # app_include_css = "/assets/frappe_s3_attachment/css/frappe_s3_attachment.css"
 app_include_js = "/assets/frappe_s3_attachment/js/frappe_s3_attachment.js"
 
+# Private download routes are normal Frappe website routes. This works on every
+# web worker, including Frappe Cloud, without modifying the WSGI middleware.
+website_route_rules = [
+    {"from_route": "/s3/<file_id>/<file_name>", "to_route": "s3_download"},
+    {"from_route": "/s3/<file_id>", "to_route": "s3_download"},
+]
+
 # include js, css files in header of web template
 # web_include_css = "/assets/frappe_s3_attachment/css/frappe_s3_attachment.css"
 # web_include_js = "/assets/frappe_s3_attachment/js/frappe_s3_attachment.js"
