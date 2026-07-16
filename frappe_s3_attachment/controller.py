@@ -2,7 +2,6 @@ from __future__ import unicode_literals
 
 import os
 import re
-from urllib.parse import quote
 
 import boto3
 
@@ -139,13 +138,6 @@ class S3Operations(object):
                 'Key': key,
 
         }
-        if file_name:
-            params['ResponseContentDisposition'] = (
-                "attachment; filename*=UTF-8''{}".format(
-                    quote(file_name, safe='')
-                )
-            )
-
         url = self.S3_CLIENT.generate_presigned_url(
             'get_object',
             Params=params,
