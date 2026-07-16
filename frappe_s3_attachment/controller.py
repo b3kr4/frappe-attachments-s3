@@ -143,7 +143,7 @@ class S3Operations(object):
             # Hetzner honours this S3 response override. It preserves the
             # original UTF-8 file name although the stored object key is a hash.
             params['ResponseContentDisposition'] = (
-                "attachment; filename*=UTF-8''{}".format(
+                "inline; filename*=UTF-8''{}".format(
                     quote(file_name, safe='')
                 )
             )
