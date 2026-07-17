@@ -311,7 +311,24 @@ def upload_existing_files_s3(name):
 
         # File exists?
         if not os.path.exists(file_path):
-            return False, file_path
+            key = s3_upload.key_generator(
+                doc.content_hash, doc.file_name, parent_doctype, parent_name
+            )
+            # A duplicate File record can point to a local file that was
+            # already removed while migrating another record with the same
+            # content hash. In that case the S3 object is the source of truth.
+            if not s3_upload.object_exists(key):
+                return False, file_path
+
+            file_url = get_download_url(doc.name, doc.file_name)
+            frappe.db.sql(
+                """UPDATE `tabFile` SET file_url=%s, folder=%s,
+                old_parent=%s WHERE name=%s""",
+                (file_url, "Home/Attachments", "Home/Attachments", doc.name),
+            )
+            update_attach_field_references(path, file_url)
+            frappe.db.commit()
+            return True, None
 
         s3_upload.upload_files_to_s3_with_key(
             file_path, doc.content_hash, doc.file_name,
