@@ -55,6 +55,22 @@ Frappe-authorised use with Hetzner Object Storage.
 5. Delete From Cloud when selected deletes the file form s3 bucket whenever a file
     is deleted from ui. By default the Delete from cloud will be unchecked.
 
+### Migration helper
+
+For large migrations, use `scripts/migrate_existing_files.py` from a machine
+that can reach the Frappe site. It identifies local `File` records and migrates
+them one at a time through the API, so every completed file is retained if a
+later upload fails. The API key user requires the `System Manager` role.
+
+```bash
+python scripts/migrate_existing_files.py --site https://erp.example.com \\
+  --api-key API_KEY --api-secret API_SECRET
+```
+
+Pass `--dry-run` to only list the number of files that would be migrated. API
+credentials can also be supplied through `FRAPPE_API_KEY` and
+`FRAPPE_API_SECRET` environment variables.
+
 #### License
 
 MIT

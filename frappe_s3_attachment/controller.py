@@ -344,6 +344,27 @@ def s3_file_regex_match(file_url):
 
 
 @frappe.whitelist()
+def migrate_single_file(name):
+    """Migrate one local File document to S3.
+
+    ``name`` is the primary key of the File document (for example
+    ``FILE-00001``), not its file name.
+    """
+    frappe.only_for('System Manager')
+
+    file_url = frappe.db.get_value('File', name, 'file_url')
+    if file_url is None:
+        frappe.throw(frappe._('File not found.'), frappe.DoesNotExistError)
+    if not file_url:
+        frappe.throw(frappe._('File has no file URL.'))
+    if s3_file_regex_match(file_url):
+        frappe.throw(frappe._('File is already stored in S3.'))
+
+    upload_existing_files_s3(name)
+    return {'name': name, 'migrated': True}
+
+
+@frappe.whitelist()
 def migrate_existing_files():
     """
     Function to migrate the existing files to s3.
