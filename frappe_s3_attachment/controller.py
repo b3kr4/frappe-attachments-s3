@@ -311,7 +311,7 @@ def upload_existing_files_s3(name):
 
         # File exists?
         if not os.path.exists(file_path):
-            return
+            return False, file_path
 
         s3_upload.upload_files_to_s3_with_key(
             file_path, doc.content_hash, doc.file_name,
@@ -331,6 +331,7 @@ def upload_existing_files_s3(name):
         )
         update_attach_field_references(path, file_url)
         frappe.db.commit()
+        return True, None
 
 
 def s3_file_regex_match(file_url):
@@ -358,7 +359,13 @@ def migrate_single_file(name):
     if s3_file_regex_match(file_url):
         frappe.throw(frappe._('File is already stored in S3.'))
 
-    upload_existing_files_s3(name)
+    migrated, file_path = upload_existing_files_s3(name)
+    if not migrated:
+        frappe.throw(
+            frappe._('Local file not found at {0}; migration was not performed.').format(
+                file_path
+            )
+        )
     return {'name': name, 'migrated': True}
 
 
