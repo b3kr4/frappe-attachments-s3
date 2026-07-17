@@ -16,7 +16,11 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 
-S3_METHOD_PREFIX = '/api/method/frappe_s3_attachment.controller.generate_file'
+S3_URL_PREFIXES = (
+    'https:',
+    '/s3/',
+    '/api/method/frappe_s3_attachment.controller.generate_file',
+)
 
 
 def api_request(site, headers, path, data=None, retries=3):
@@ -51,7 +55,7 @@ def api_request(site, headers, path, data=None, retries=3):
 
 def is_already_migrated(file_url):
     """Mirror the migration check used by the server-side app."""
-    return file_url.startswith('https:') or file_url.startswith(S3_METHOD_PREFIX)
+    return file_url.startswith(S3_URL_PREFIXES)
 
 
 def find_pending_files(site, headers, page_size):

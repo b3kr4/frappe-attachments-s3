@@ -334,11 +334,9 @@ def upload_existing_files_s3(name):
 
 
 def s3_file_regex_match(file_url):
-    """
-    Match the public file regex match.
-    """
+    """Return whether a File URL is already served from S3."""
     return re.match(
-        r'^(https:|/api/method/frappe_s3_attachment.controller.generate_file)',
+        r'^(https:|/s3/|/api/method/frappe_s3_attachment.controller.generate_file)',
         file_url
     )
 
