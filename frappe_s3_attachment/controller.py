@@ -219,8 +219,15 @@ def redirect_to_file(file_doc, file_name=None):
 @frappe.whitelist()
 def file_upload_to_s3(doc, method):
     """
-    check and upload files to s3. the path check and
+    Upload a newly-created local file to S3.
+
+    Frappe represents folders in the File doctype as records too.  They have
+    no file content (and their resolved local path is a directory), so they
+    must remain local and must not be passed to python-magic or S3.
     """
+    if doc.is_folder:
+        return
+
     s3_upload = S3Operations()
     path = doc.file_url
     site_path = frappe.utils.get_site_path()
