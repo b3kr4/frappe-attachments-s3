@@ -1,0 +1,31 @@
+"""Frappe ``File`` integration for files stored by this app in S3."""
+
+from frappe.core.doctype.file.file import File
+
+
+class S3File(File):
+    """Treat the app's authenticated S3 route as remote file storage.
+
+    Frappe reuses ``file_url`` for files with identical content.  Without this
+    override, a reused ``/s3/...`` URL is checked as a local path while the new
+    File document is being inserted and Frappe rejects it as unsafe.
+    """
+
+    @property
+    def is_s3_file(self):
+        return bool(self.file_url and self.file_url.startswith('/s3/'))
+
+    @property
+    def is_remote_file(self):
+        return self.is_s3_file or super().is_remote_file
+
+    def get_full_path(self):
+        if self.is_s3_file:
+            return self.file_url
+        return super().get_full_path()
+
+    def exists_on_disk(self):
+        """An S3-backed duplicate is available although it is not local."""
+        if self.is_s3_file:
+            return True
+        return super().exists_on_disk()

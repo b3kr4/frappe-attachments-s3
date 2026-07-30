@@ -106,6 +106,12 @@ doc_events = {
     }
 }
 
+# Frappe deduplicates files by reusing ``File.file_url``.  Our /s3 routes are
+# authenticated remote storage URLs, not local filesystem paths.
+override_doctype_class = {
+    "File": "frappe_s3_attachment.file.S3File",
+}
+
 # Scheduled Tasks
 # ---------------
 
