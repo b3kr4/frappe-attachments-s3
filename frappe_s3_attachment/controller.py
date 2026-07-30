@@ -219,13 +219,38 @@ def redirect_to_file(file_doc, file_name=None):
 @frappe.whitelist()
 def file_upload_to_s3(doc, method):
     """
-    Upload a newly-created local file to S3.
+    Schedule a newly-created local file for upload to S3 after commit.
 
     Frappe represents folders in the File doctype as records too.  They have
     no file content (and their resolved local path is a directory), so they
     must remain local and must not be passed to python-magic or S3.
+
+    It is important not to replace ``file_url`` while ``after_insert`` hooks
+    are still running.  Other apps can legitimately inspect the local path in
+    those hooks (for example to extract data from the uploaded document).  A
+    ``/s3/...`` download route is not a filesystem path and caused such hooks
+    to reject otherwise valid multipart uploads.
     """
     if doc.is_folder:
+        return
+
+    parent_doctype = doc.attached_to_doctype or 'File'
+    ignore_s3_upload_for_doctype = (
+        frappe.local.conf.get('ignore_s3_upload_for_doctype')
+        or ['Data Import']
+    )
+    if parent_doctype in ignore_s3_upload_for_doctype:
+        return
+
+    frappe.db.after_commit.add(
+        lambda file_name=doc.name: upload_file_to_s3_after_commit(file_name)
+    )
+
+
+def upload_file_to_s3_after_commit(file_name):
+    """Upload one committed local File record and replace its URL with S3."""
+    doc = frappe.get_doc('File', file_name)
+    if doc.is_folder or s3_file_regex_match(doc.file_url):
         return
 
     s3_upload = S3Operations()
@@ -233,31 +258,28 @@ def file_upload_to_s3(doc, method):
     site_path = frappe.utils.get_site_path()
     parent_doctype = doc.attached_to_doctype or 'File'
     parent_name = doc.attached_to_name
-    ignore_s3_upload_for_doctype = frappe.local.conf.get('ignore_s3_upload_for_doctype') or ['Data Import']
-    if parent_doctype not in ignore_s3_upload_for_doctype:
-        if not doc.is_private:
-            file_path = site_path + '/public' + path
-        else:
-            file_path = site_path + path
-        s3_upload.upload_files_to_s3_with_key(
-            file_path, doc.content_hash, doc.file_name,
-            doc.is_private, parent_doctype,
-            parent_name
-        )
+    if not doc.is_private:
+        file_path = site_path + '/public' + path
+    else:
+        file_path = site_path + path
+    s3_upload.upload_files_to_s3_with_key(
+        file_path, doc.content_hash, doc.file_name,
+        doc.is_private, parent_doctype,
+        parent_name
+    )
 
-        file_url = get_download_url(doc.name, doc.file_name)
-        os.remove(file_path)
-        frappe.db.sql("""UPDATE `tabFile` SET file_url=%s, folder=%s,
-            old_parent=%s WHERE name=%s""", (
-            file_url, 'Home/Attachments', 'Home/Attachments', doc.name))
+    file_url = get_download_url(doc.name, doc.file_name)
+    os.remove(file_path)
+    frappe.db.sql("""UPDATE `tabFile` SET file_url=%s, folder=%s,
+        old_parent=%s WHERE name=%s""", (
+        file_url, 'Home/Attachments', 'Home/Attachments', doc.name))
 
-        doc.file_url = file_url
-        update_attach_field_references(path, file_url)
+    update_attach_field_references(path, file_url)
 
-        if parent_doctype and frappe.get_meta(parent_doctype).get('image_field'):
-            frappe.db.set_value(parent_doctype, parent_name, frappe.get_meta(parent_doctype).get('image_field'), file_url)
+    if parent_doctype and frappe.get_meta(parent_doctype).get('image_field'):
+        frappe.db.set_value(parent_doctype, parent_name, frappe.get_meta(parent_doctype).get('image_field'), file_url)
 
-        frappe.db.commit()
+    frappe.db.commit()
 
 
 @frappe.whitelist()
