@@ -29,3 +29,9 @@ class S3File(File):
         if self.is_s3_file:
             return True
         return super().exists_on_disk()
+
+    def validate_file_on_disk(self):
+        """S3 download routes have no corresponding local filesystem file."""
+        if self.is_s3_file:
+            return
+        return super().validate_file_on_disk()
