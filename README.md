@@ -50,8 +50,10 @@ Frappe-authorised use with Hetzner Object Storage.
     in **S3 Endpoint URL**.
     Hetzner buckets use virtual-host addressing, so public URLs are generated as
     `https://&lt;bucket&gt;.&lt;region&gt;.your-objectstorage.com/&lt;object-key&gt;`.
-4. Migrate existing files lets all the existing files in private and public folders
-    to be migrated to s3.
+4. Migrate existing files queues the migration in Frappe's **long** worker. It
+    processes bounded batches of 25 files, so large migrations do not keep the
+    browser/API request open. Check the Error Log for individual files that
+    could not be migrated.
 5. Delete From Cloud when selected deletes the file form s3 bucket whenever a file
     is deleted from ui. By default the Delete from cloud will be unchecked.
 
@@ -60,7 +62,8 @@ Frappe-authorised use with Hetzner Object Storage.
 For large migrations, use `scripts/migrate_existing_files.py` from a machine
 that can reach the Frappe site. It identifies local `File` records and migrates
 them one at a time through the API, so every completed file is retained if a
-later upload fails. The API key user requires the `System Manager` role.
+later upload fails. The API key user requires the `System Manager` role. This
+is also a good alternative if no long worker is configured.
 
 ```bash
 python scripts/migrate_existing_files.py --site https://erp.example.com \\

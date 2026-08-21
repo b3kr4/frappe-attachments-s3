@@ -6,13 +6,12 @@ frappe.ui.form.on('S3 File Attachment', {
 
 	},
 	migrate_existing_files: function (frm) {
-        frappe.msgprint("Local files getting migrated", "S3 Migration");
+		frappe.msgprint("Local files migration started in background. Progress and errors are logged in Error Log.", "S3 Migration");
         frappe.call({
             method: "frappe_s3_attachment.controller.migrate_existing_files",
             callback: function (data) {
-                if (data.message) {
-					frappe.msgprint('Upload Successful')
-					location.reload(true);
+                if (data.message && data.message.queued) {
+					frappe.show_alert({message: 'S3-Migration enqueued', indicator: 'green'});
                 } else {
                     frappe.msgprint('Retry');
                 }

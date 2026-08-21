@@ -15,6 +15,9 @@ import frappe
 import magic
 
 
+DEFAULT_MIGRATION_BATCH_SIZE = 25
+
+
 class S3Operations(object):
 
     def __init__(self):
@@ -157,6 +160,42 @@ class S3Operations(object):
         return url
 
 
+def get_local_file_path(file_url, is_private):
+    """Resolve an attachment URL without allowing filesystem traversal.
+
+    ``File.file_url`` originates in the database.  Do not pass it directly to
+    ``os.remove``: a crafted value such as ``/files/../../site_config.json``
+    must not escape Frappe's attachment directories.
+    """
+    if not file_url:
+        frappe.throw(frappe._('Invalid local file URL.'))
+
+    if is_private:
+        expected_prefix = '/private/files/'
+        attachments_root = frappe.utils.get_site_path('private', 'files')
+    else:
+        expected_prefix = '/files/'
+        attachments_root = frappe.utils.get_site_path('public', 'files')
+
+    if not file_url.startswith(expected_prefix):
+        frappe.throw(frappe._('Invalid local file URL.'))
+
+    if is_private:
+        candidate = frappe.utils.get_site_path(file_url.lstrip('/'))
+    else:
+        candidate = frappe.utils.get_site_path('public', file_url.lstrip('/'))
+
+    attachments_root = os.path.realpath(attachments_root)
+    candidate = os.path.realpath(candidate)
+    try:
+        is_attachment = os.path.commonpath([attachments_root, candidate]) == attachments_root
+    except ValueError:
+        is_attachment = False
+    if not is_attachment:
+        frappe.throw(frappe._('File path is outside the attachments directory.'))
+    return candidate
+
+
 def get_download_url(file_id, file_name=None):
     """Return a concise app route; do not persist Object Storage URLs."""
     url = "/s3/{}".format(file_id)
@@ -255,13 +294,9 @@ def upload_file_to_s3_after_commit(file_name):
 
     s3_upload = S3Operations()
     path = doc.file_url
-    site_path = frappe.utils.get_site_path()
     parent_doctype = doc.attached_to_doctype or 'File'
     parent_name = doc.attached_to_name
-    if not doc.is_private:
-        file_path = site_path + '/public' + path
-    else:
-        file_path = site_path + path
+    file_path = get_local_file_path(path, doc.is_private)
     s3_upload.upload_files_to_s3_with_key(
         file_path, doc.content_hash, doc.file_name,
         doc.is_private, parent_doctype,
@@ -330,13 +365,9 @@ def upload_existing_files_s3(name):
         doc = frappe.get_doc('File', name)
         s3_upload = S3Operations()
         path = doc.file_url
-        site_path = frappe.utils.get_site_path()
         parent_doctype = doc.attached_to_doctype
         parent_name = doc.attached_to_name
-        if not doc.is_private:
-            file_path = site_path + '/public' + path
-        else:
-            file_path = site_path + path
+        file_path = get_local_file_path(path, doc.is_private)
 
         # File exists?
         if not os.path.exists(file_path):
@@ -416,20 +447,80 @@ def migrate_single_file(name):
 
 
 @frappe.whitelist()
-def migrate_existing_files():
-    """
-    Function to migrate the existing files to s3.
-    """
+def migrate_existing_files(batch_size=DEFAULT_MIGRATION_BATCH_SIZE):
+    """Queue the migration so an HTTP request never waits for all files."""
+    frappe.only_for('System Manager')
+    try:
+        batch_size = int(batch_size)
+    except (TypeError, ValueError):
+        frappe.throw(frappe._('Batch size must be a number.'))
+    if not 1 <= batch_size <= 100:
+        frappe.throw(frappe._('Batch size must be between 1 and 100.'))
 
-    files_list = frappe.get_all(
-        'File',
-        fields=['name', 'file_url']
+    job = frappe.enqueue(
+        'frappe_s3_attachment.controller.migrate_existing_files_batch',
+        queue='long',
+        timeout=1500,
+        batch_size=batch_size,
+        last_name=None,
+        migrated=0,
+        failed=0,
     )
-    for file in files_list:
-        if file['file_url']:
-            if not s3_file_regex_match(file['file_url']):
-                upload_existing_files_s3(file['name'])
-    return True
+    return {'queued': True, 'job_id': getattr(job, 'id', None)}
+
+
+def migrate_existing_files_batch(batch_size, last_name=None, migrated=0, failed=0):
+    """Migrate a bounded page and queue the following page.
+
+    The name cursor makes migration resumable across jobs and ensures a missing
+    local file is logged once instead of causing an endless retry loop.
+    """
+    filters = []
+    if last_name:
+        filters.append(['name', '>', last_name])
+    files_list = frappe.get_all(
+        'File', filters=filters, fields=['name', 'file_url'],
+        order_by='name asc', limit_page_length=batch_size
+    )
+    if not files_list:
+        frappe.logger().info(
+            'S3 migration complete: {0} migrated, {1} failed.'.format(
+                migrated, failed
+            )
+        )
+        return {'migrated': migrated, 'failed': failed}
+
+    for file_doc in files_list:
+        file_url = file_doc.file_url
+        if not file_url or s3_file_regex_match(file_url):
+            continue
+        try:
+            completed, missing_path = upload_existing_files_s3(file_doc.name)
+            if completed:
+                migrated += 1
+            else:
+                failed += 1
+                frappe.log_error(
+                    'Local file not found: {0}'.format(missing_path),
+                    'S3 migration failed for {0}'.format(file_doc.name)
+                )
+        except Exception:
+            failed += 1
+            frappe.log_error(
+                frappe.get_traceback(),
+                'S3 migration failed for {0}'.format(file_doc.name)
+            )
+
+    frappe.enqueue(
+        'frappe_s3_attachment.controller.migrate_existing_files_batch',
+        queue='long',
+        timeout=1500,
+        batch_size=batch_size,
+        last_name=files_list[-1].name,
+        migrated=migrated,
+        failed=failed,
+    )
+    return {'migrated': migrated, 'failed': failed, 'next_batch_queued': True}
 
 
 def delete_from_cloud(doc, method):
