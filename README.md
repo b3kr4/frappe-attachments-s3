@@ -74,6 +74,25 @@ Pass `--dry-run` to only list the number of files that would be migrated. API
 credentials can also be supplied through `FRAPPE_API_KEY` and
 `FRAPPE_API_SECRET` environment variables.
 
+### Restore accidentally cleared S3 hashes
+
+If older `/s3/` File records have an empty `content_hash`, first run the
+history-based repair in preview mode. It restores only values that are present
+as the old value of a tracked File change; records without such history are
+reported and left untouched.
+
+```bash
+bench --site SITE execute frappe_s3_attachment.controller.restore_missing_s3_content_hashes
+```
+
+After reviewing the returned `restored` and `unrecoverable` lists, apply the
+same repair with:
+
+```bash
+bench --site SITE execute frappe_s3_attachment.controller.restore_missing_s3_content_hashes \
+  --kwargs '{"dry_run": 0}'
+```
+
 #### License
 
 MIT

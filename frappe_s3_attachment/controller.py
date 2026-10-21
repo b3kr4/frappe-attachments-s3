@@ -1,5 +1,6 @@
 from __future__ import unicode_literals
 
+import json
 import os
 import re
 from urllib.parse import quote
@@ -421,6 +422,86 @@ def s3_file_regex_match(file_url):
         r'^(https:|/s3/|/api/method/frappe_s3_attachment.controller.generate_file)',
         file_url
     )
+
+
+def get_content_hash_from_version_data(version_data):
+    """Return a hash that was cleared from a File change-history entry.
+
+    The ``Version.data`` payload is JSON and records field changes as
+    ``[fieldname, old_value, new_value]``.  Only a transition from a non-empty
+    value to an empty one is a safe restoration candidate.
+    """
+    if isinstance(version_data, str):
+        try:
+            version_data = json.loads(version_data)
+        except (TypeError, ValueError):
+            return None
+
+    if not isinstance(version_data, dict):
+        return None
+
+    for change in reversed(version_data.get('changed') or []):
+        if not isinstance(change, (list, tuple)) or len(change) < 3:
+            continue
+        fieldname, old_value, new_value = change[:3]
+        if (
+            fieldname == 'content_hash'
+            and old_value
+            and new_value in (None, '')
+        ):
+            return old_value
+    return None
+
+
+@frappe.whitelist()
+def restore_missing_s3_content_hashes(dry_run=1):
+    """Restore S3 keys accidentally cleared from File records.
+
+    Only ``/s3/`` records with an empty hash are considered.  The previous key
+    is read from the File's tracked change history.  Records with no matching
+    history entry are deliberately skipped rather than guessing an S3 key.
+    """
+    frappe.only_for('System Manager')
+    dry_run = bool(frappe.utils.cint(dry_run))
+    files = frappe.db.sql(
+        """SELECT name FROM `tabFile`
+        WHERE file_url LIKE %s
+        AND (content_hash IS NULL OR content_hash = '')""",
+        ('/s3/%',),
+        as_dict=True,
+    )
+    restored = []
+    unrecoverable = []
+
+    for file_doc in files:
+        versions = frappe.get_all(
+            'Version',
+            filters={'ref_doctype': 'File', 'docname': file_doc.name},
+            fields=['data'],
+            order_by='creation desc',
+        )
+        content_hash = None
+        for version in versions:
+            content_hash = get_content_hash_from_version_data(version.data)
+            if content_hash:
+                break
+        if not content_hash:
+            unrecoverable.append(file_doc.name)
+            continue
+
+        restored.append(file_doc.name)
+        if not dry_run:
+            frappe.db.set_value(
+                'File', file_doc.name, 'content_hash', content_hash,
+                update_modified=False,
+            )
+
+    return {
+        'dry_run': dry_run,
+        'scanned': len(files),
+        'restored': restored,
+        'unrecoverable': unrecoverable,
+    }
 
 
 @frappe.whitelist()
