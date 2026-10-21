@@ -229,15 +229,19 @@ def get_file_for_key(key):
     if not file_name:
         frappe.throw(frappe._("File not found."), frappe.DoesNotExistError)
     file_doc = frappe.get_doc('File', file_name)
-    if not file_doc.has_permission('read'):
+    # Public File records are normally served straight from ``/files`` by
+    # Frappe.  S3-backed public files use this route instead, so they must not
+    # acquire a Desk read-permission requirement merely because their storage
+    # backend changed.
+    if file_doc.is_private and not file_doc.has_permission('read'):
         frappe.throw(frappe._("Not permitted."), frappe.PermissionError)
     return file_doc
 
 
 def get_file_for_id(file_id):
-    """Return a File document after checking its read permission."""
+    """Return a File document, authorising private files for the caller."""
     file_doc = frappe.get_doc('File', file_id)
-    if not file_doc.has_permission('read'):
+    if file_doc.is_private and not file_doc.has_permission('read'):
         frappe.throw(frappe._("Not permitted."), frappe.PermissionError)
     return file_doc
 
