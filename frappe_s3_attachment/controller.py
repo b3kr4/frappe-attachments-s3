@@ -453,24 +453,33 @@ def get_content_hash_from_version_data(version_data):
     return None
 
 
+def get_file_id_from_s3_url(file_url):
+    """Extract the File record used by a concise ``/s3/`` route."""
+    match = re.match(r'^/s3/([^/]+)(?:/|$)', file_url or '')
+    return match.group(1) if match else None
+
+
 @frappe.whitelist()
 def restore_missing_s3_content_hashes(dry_run=1):
     """Restore S3 keys accidentally cleared from File records.
 
     Only ``/s3/`` records with an empty hash are considered.  The previous key
-    is read from the File's tracked change history.  Records with no matching
-    history entry are deliberately skipped rather than guessing an S3 key.
+    is read from the File's tracked change history or, for deduplicated Files,
+    from the File record referenced by their ``/s3/<file-id>/...`` URL. Records
+    with neither source are deliberately skipped rather than guessing an S3 key.
     """
     frappe.only_for('System Manager')
     dry_run = bool(frappe.utils.cint(dry_run))
     files = frappe.db.sql(
-        """SELECT name FROM `tabFile`
+        """SELECT name, file_url FROM `tabFile`
         WHERE file_url LIKE %s
         AND (content_hash IS NULL OR content_hash = '')""",
         ('/s3/%',),
         as_dict=True,
     )
     restored = []
+    restored_from_history = []
+    restored_from_s3_route = []
     unrecoverable = []
 
     for file_doc in files:
@@ -485,11 +494,24 @@ def restore_missing_s3_content_hashes(dry_run=1):
             content_hash = get_content_hash_from_version_data(version.data)
             if content_hash:
                 break
+
+        restored_from_route = False
+        source_file_id = get_file_id_from_s3_url(file_doc.file_url)
+        if not content_hash and source_file_id and source_file_id != file_doc.name:
+            content_hash = frappe.db.get_value(
+                'File', source_file_id, 'content_hash'
+            )
+            restored_from_route = bool(content_hash)
+
         if not content_hash:
             unrecoverable.append(file_doc.name)
             continue
 
         restored.append(file_doc.name)
+        if restored_from_route:
+            restored_from_s3_route.append(file_doc.name)
+        else:
+            restored_from_history.append(file_doc.name)
         if not dry_run:
             frappe.db.set_value(
                 'File', file_doc.name, 'content_hash', content_hash,
@@ -500,6 +522,8 @@ def restore_missing_s3_content_hashes(dry_run=1):
         'dry_run': dry_run,
         'scanned': len(files),
         'restored': restored,
+        'restored_from_history': restored_from_history,
+        'restored_from_s3_route': restored_from_s3_route,
         'unrecoverable': unrecoverable,
     }
 

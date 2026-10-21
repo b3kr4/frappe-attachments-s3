@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 from frappe.core.doctype.file.file import File
 from frappe_s3_attachment.controller import (
 	get_content_hash_from_version_data,
+	get_file_id_from_s3_url,
 	get_file_for_id,
 )
 from frappe_s3_attachment.file import S3File
@@ -30,6 +31,13 @@ class TestS3FileAttachment(unittest.TestCase):
 		self.assertIsNone(get_content_hash_from_version_data({
 			'changed': [['content_hash', None, 'new-value']],
 		}))
+
+	def test_extracts_the_file_id_from_an_s3_download_url(self):
+		self.assertEqual(
+			get_file_id_from_s3_url('/s3/37dae744c8/document.pdf'),
+			'37dae744c8',
+		)
+		self.assertIsNone(get_file_id_from_s3_url('/files/document.pdf'))
 
 	def test_s3_route_preserves_content_hash_when_validated(self):
 		"""Frappe's remote-file validation must not erase the S3 object key."""

@@ -76,10 +76,11 @@ credentials can also be supplied through `FRAPPE_API_KEY` and
 
 ### Restore accidentally cleared S3 hashes
 
-If older `/s3/` File records have an empty `content_hash`, first run the
-history-based repair in preview mode. It restores only values that are present
-as the old value of a tracked File change; records without such history are
-reported and left untouched.
+If older `/s3/` File records have an empty `content_hash`, first run the repair
+in preview mode. It restores a value only when it is present as the old value
+of a tracked File change, or when the `/s3/<file-id>/...` route references
+another File record with a hash. Records without either source are reported and
+left untouched.
 
 ```bash
 bench --site SITE execute frappe_s3_attachment.controller.restore_missing_s3_content_hashes
