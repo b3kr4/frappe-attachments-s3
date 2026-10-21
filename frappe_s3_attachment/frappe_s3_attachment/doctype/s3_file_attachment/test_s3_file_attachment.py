@@ -7,9 +7,26 @@ import frappe
 import unittest
 from unittest.mock import Mock, patch
 
+from frappe.core.doctype.file.file import File
 from frappe_s3_attachment.controller import get_file_for_id
+from frappe_s3_attachment.file import S3File
 
 class TestS3FileAttachment(unittest.TestCase):
+	def test_s3_route_preserves_content_hash_when_validated(self):
+		"""Frappe's remote-file validation must not erase the S3 object key."""
+		file_doc = S3File({
+			'file_url': '/s3/fd8bd9032e',
+			'content_hash': 'a-content-hash',
+		})
+
+		def clear_content_hash(doc):
+			doc.content_hash = None
+
+		with patch.object(File, 'validate', clear_content_hash):
+			file_doc.validate()
+
+		self.assertEqual(file_doc.content_hash, 'a-content-hash')
+
 	def test_public_s3_file_does_not_require_guest_read_permission(self):
 		"""A public File remains available when the request is anonymous."""
 		file_doc = Mock(is_private=0)
