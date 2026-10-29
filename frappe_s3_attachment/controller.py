@@ -3,7 +3,7 @@ from __future__ import unicode_literals
 import json
 import os
 import re
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import boto3
 
@@ -260,6 +260,60 @@ def redirect_to_file(file_doc, file_name=None):
     frappe.local.response["location"] = signed_url
 
 
+def get_file_redirect_url(file_doc, file_name=None):
+    """Resolve an authorised File, including a pending/failed S3 transfer.
+
+    Callers must obtain file_doc through get_file_for_id/get_file_for_key.
+    Never redirect to an arbitrary user-supplied external File URL.
+    """
+    if not file_doc.is_folder and (file_doc.file_url or '').startswith('/s3/'):
+        return get_signed_url(file_doc, file_name)
+    if file_doc.is_folder:
+        frappe.throw(frappe._('File not found.'), frappe.DoesNotExistError)
+    get_local_file_path(file_doc.file_url, file_doc.is_private)
+    if file_doc.is_private:
+        return file_doc.file_url + '?' + urlencode({'fid': file_doc.name})
+    return file_doc.file_url
+
+
+def update_upload_response(response, request):
+    """Refresh only successful File upload responses after after_commit ran.
+
+    At this point the JSON body has already been serialised. Updating the
+    original Document or frappe.response alone would leave that body stale.
+    """
+    if response is None:
+        return
+    if request.path.startswith('/s3/'):
+        response.headers['Cache-Control'] = 'private, no-store'
+
+    upload_methods = {'upload_file', 'frappe.handler.upload_file'}
+    api_methods = {
+        '/api/method/' + method for method in upload_methods
+    } | {'/api/v1/method/' + method for method in upload_methods}
+    is_upload = request.path.rstrip('/') in api_methods or (
+        request.path == '/' and frappe.form_dict.get('cmd') in upload_methods
+    )
+    if (
+        not is_upload or request.method != 'POST'
+        or response.status_code != 200 or not response.is_json
+    ):
+        return
+    payload = response.get_json()
+    if not isinstance(payload, dict):
+        return
+    file_data = payload.get('message')
+    if not isinstance(file_data, dict) or file_data.get('doctype') != 'File':
+        return
+    file_id = file_data.get('name')
+    if not file_id:
+        return
+    current_url = frappe.db.get_value('File', file_id, 'file_url')
+    if current_url and current_url.startswith('/s3/'):
+        file_data['file_url'] = current_url
+        response.set_data(json.dumps(payload))
+
+
 @frappe.whitelist()
 def file_upload_to_s3(doc, method):
     """
@@ -275,7 +329,7 @@ def file_upload_to_s3(doc, method):
     ``/s3/...`` download route is not a filesystem path and caused such hooks
     to reject otherwise valid multipart uploads.
     """
-    if doc.is_folder:
+    if doc.is_folder or not (doc.file_url or '').startswith(('/files/', '/private/files/')):
         return
 
     parent_doctype = doc.attached_to_doctype or 'File'
@@ -286,6 +340,7 @@ def file_upload_to_s3(doc, method):
     if parent_doctype in ignore_s3_upload_for_doctype:
         return
 
+    doc.flags.s3_upload_pending = True
     frappe.db.after_commit.add(
         lambda file_name=doc.name: upload_file_to_s3_after_commit(file_name)
     )

@@ -112,6 +112,8 @@ override_doctype_class = {
     "File": "frappe_s3_attachment.file.S3File",
 }
 
+after_request = ['frappe_s3_attachment.controller.update_upload_response']
+
 # Scheduled Tasks
 # ---------------
 

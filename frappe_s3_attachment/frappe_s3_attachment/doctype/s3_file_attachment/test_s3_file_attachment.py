@@ -42,6 +42,7 @@ class TestS3FileAttachment(unittest.TestCase):
 	def test_s3_route_preserves_content_hash_when_validated(self):
 		"""Frappe's remote-file validation must not erase the S3 object key."""
 		file_doc = S3File({
+			'doctype': 'File',
 			'file_url': '/s3/fd8bd9032e',
 			'content_hash': 'a-content-hash',
 		})

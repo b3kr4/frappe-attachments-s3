@@ -19,6 +19,42 @@ class S3File(File):
     def is_remote_file(self):
         return self.is_s3_file or super().is_remote_file
 
+    @property
+    def unique_url(self):
+        """Give extracted editor images a stable URL before the upload commits.
+
+        Keep file_url local for other File hooks. Frappe embeds unique_url in
+        Text Editor HTML immediately after saving the new File document.
+        """
+        if self.flags.s3_upload_pending:
+            from frappe_s3_attachment.controller import get_download_url
+
+            return get_download_url(self.name, self.file_name)
+        return super().unique_url
+
+    def get_content(self):
+        """Support Frappe's private-image PDF embedding without an HTTP fetch.
+
+        Like File.get_content, this is an internal storage operation. Callers
+        exposing contents must authorise the File first (as Frappe's PDF code
+        and this app's download route do).
+        """
+        if not self.is_s3_file:
+            return super().get_content()
+
+        import frappe
+        from frappe_s3_attachment.controller import S3Operations
+
+        if not self.content_hash:
+            frappe.throw(frappe._('S3 file has no content hash.'))
+        storage = S3Operations()
+        key = storage.key_generator(self.content_hash, '', '', '')
+        body = storage.read_file_from_s3(key)['Body']
+        try:
+            return body.read()
+        finally:
+            body.close()
+
     def validate(self):
         """Keep the S3 object key when Frappe validates a remote route.
 

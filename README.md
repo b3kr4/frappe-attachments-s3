@@ -57,6 +57,27 @@ Frappe-authorised use with Hetzner Object Storage.
 5. Delete From Cloud when selected deletes the file form s3 bucket whenever a file
     is deleted from ui. By default the Delete from cloud will be unchecked.
 
+### Rich-text images and PDFs
+
+New images extracted from Text Editor fields receive a stable `/s3/` URL
+before the S3 transfer commits. Other File hooks can still use the local file
+during insertion. The download route checks File permissions and redirects to
+the current storage location, including local storage if a transfer has failed.
+Successful direct upload responses also return the current S3 URL.
+
+Private images can be read directly from S3 by Frappe's PDF image embedding.
+Signed download URLs are never stored in editor HTML. Existing rich-text
+content is not rewritten.
+
+Run the integration tests on a development site with:
+
+```bash
+bench --site SITE run-tests --module frappe_s3_attachment.tests.test_rich_text
+```
+
+The tests mock the S3 transport, create temporary ToDo/File records, and exercise
+real database commits. PDF generation is tested when `wkhtmltopdf` is available.
+
 ### Migration helper
 
 For large migrations, use `scripts/migrate_existing_files.py` from a machine
